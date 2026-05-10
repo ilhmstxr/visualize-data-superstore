@@ -280,8 +280,8 @@
             root.y0 = 0;
 
             // Initialize all nodes and collapse them to prevent lag
-            root.descendants().forEach((d, index) => {
-                d.id = index;
+            root.descendants().forEach((d) => {
+                d.id = ++i;
                 d._children = d.children;
             });
 
