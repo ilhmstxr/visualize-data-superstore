@@ -220,6 +220,24 @@
             stroke: var(--link-color);
             stroke-opacity: 0.4;
             stroke-width: 1.5px;
+            transition: stroke 0.3s, stroke-width 0.3s;
+        }
+
+        .link.active-path {
+            stroke: #fff;
+            stroke-opacity: 0.8;
+            stroke-width: 3px;
+            stroke-dasharray: 5, 5;
+            animation: dash 1s linear infinite;
+        }
+
+        @keyframes dash {
+            from {
+                stroke-dashoffset: 20;
+            }
+            to {
+                stroke-dashoffset: 0;
+            }
         }
 
         .label {
@@ -284,7 +302,7 @@
 
     <div id="tooltip" class="tooltip"></div>
 
-    <script src="script.js"></script>
+    <script src="script.js?v=2"></script>
 </body>
 
 </html>

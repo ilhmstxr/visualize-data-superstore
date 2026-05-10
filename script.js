@@ -1,19 +1,17 @@
 let svg, g, zoom, root, treeLayout;
 let i = 0;
 let width, height;
+let selectedNode = null;
 const margin = { top: 20, right: 120, bottom: 20, left: 120 };
 
 // Scales for Semantic Visual Encoding
-// Radius mapped to Sales (domain: 0 to ~2.5M, range: 4px to 25px)
 const radiusScale = d3.scaleSqrt().domain([0, 2500000]).range([4, 25]);
 
 async function init() {
     try {
-        // Fetch the JSON data
         const response = await fetch('hierarchy.json');
         const data = await response.json();
 
-        // Calculate dimensions based on the 75% width container
         width = document.getElementById('viz-area').clientWidth;
         height = document.getElementById('viz-area').clientHeight;
         
@@ -21,13 +19,11 @@ async function init() {
 
         render(data);
 
-        // Hide loader
         document.getElementById('loader').style.opacity = '0';
         setTimeout(() => {
             document.getElementById('loader').style.display = 'none';
         }, 500);
 
-        // Update stats
         const totalNodes = d3.hierarchy(data).descendants().length;
         document.getElementById('stats').innerText = `Visualizing ${totalNodes.toLocaleString()} data points (Collapsible Tree)`;
 
@@ -63,46 +59,38 @@ function render(data) {
     g = svg.append("g")
         .attr("transform", `translate(${margin.left},${margin.top})`);
 
-    // Use fixed node size for a consistent vertical layout
-    treeLayout = d3.tree().nodeSize([40, 250]); // slightly larger spacing for bigger nodes
+    treeLayout = d3.tree().nodeSize([40, 250]);
 
     root = d3.hierarchy(data);
     root.x0 = height / 2;
     root.y0 = 0;
 
-    // Initialize all nodes
     root.descendants().forEach((d) => {
         d.id = ++i;
         d._children = d.children;
     });
 
-    // B. Collapsible Nodes: Show until Category Level (Depth 3)
-    // Level 0: Root
-    // Level 1: Year
-    // Level 2: Quarter
-    // Level 3: Category
-    function collapse(d) {
-        if (d.children) {
-            d._children = d.children;
-            d._children.forEach(collapse);
-            // Collapse if depth is 3 (Category) or deeper
-            if (d.depth >= 3) {
-                d.children = null;
+    applyInitialCollapse(root);
+
+    update(root);
+    updateKPI(root);
+
+    svg.call(zoom.transform, d3.zoomIdentity.translate(width / 4, height / 2).scale(0.8));
+}
+
+function applyInitialCollapse(d) {
+    function collapse(node) {
+        if (node.children) {
+            node._children = node.children;
+            node._children.forEach(collapse);
+            if (node.depth >= 3) {
+                node.children = null;
             }
         }
     }
-
-    if (root.children) {
-        root.children.forEach(collapse);
+    if (d.children) {
+        d.children.forEach(collapse);
     }
-
-    update(root);
-    
-    // Initialize KPI panel with Root data
-    updateKPI(root);
-
-    // Set initial zoom centered
-    svg.call(zoom.transform, d3.zoomIdentity.translate(width / 4, height / 2).scale(0.8));
 }
 
 function update(source) {
@@ -110,10 +98,9 @@ function update(source) {
     const nodes = treeData.descendants();
     const links = treeData.links();
 
-    // Normalize for fixed-depth
     nodes.forEach(d => { d.y = d.depth * 250 });
 
-    // ****************** Nodes section ***************************
+    // --- Nodes ---
     const node = g.selectAll('g.node')
         .data(nodes, d => d.id || (d.id = ++i));
 
@@ -124,7 +111,6 @@ function update(source) {
         .on("mouseover", showTooltip)
         .on("mouseout", hideTooltip);
 
-    // A. Semantic Visual Encoding: Size by Sales, Color by Profit
     nodeEnter.append('circle')
         .attr('class', 'node')
         .attr('r', 1e-6)
@@ -146,29 +132,41 @@ function update(source) {
         .duration(750)
         .attr("transform", d => `translate(${d.y},${d.x})`);
 
-    // Update radius and color
     nodeUpdate.select('circle.node')
         .attr('r', d => Math.max(4, radiusScale(d.data.Sales || 0)))
         .style("fill", d => d.data.Profit < 0 ? "var(--danger)" : "var(--success)")
-        .style("opacity", d => d._children && !d.children ? 0.7 : 1) // slightly dim collapsed nodes
+        .style("stroke", d => d === selectedNode ? "#fff" : "none")
+        .style("stroke-width", d => d === selectedNode ? "3px" : "0")
+        .style("opacity", d => d._children && !d.children ? 0.7 : 1)
         .attr('cursor', 'pointer');
 
     nodeUpdate.select('text')
+        .transition().duration(750)
+        .attr("dy", d => {
+            // If the node is on the active path, shift the text up to avoid overlapping with the line
+            if (selectedNode) {
+                let curr = selectedNode;
+                while (curr) {
+                    if (curr === d) return "-1.2em"; // Move text higher up
+                    curr = curr.parent;
+                }
+            }
+            return ".35em"; // Default vertical alignment
+        })
         .attr("x", d => d.children || d._children ? - (Math.max(4, radiusScale(d.data.Sales || 0)) + 6) : (Math.max(4, radiusScale(d.data.Sales || 0)) + 6))
-        .style("fill-opacity", 1);
+        .style("fill-opacity", 1)
+        .style("font-weight", d => d === selectedNode ? "bold" : "normal")
+        .style("fill", d => d === selectedNode ? "#fff" : "var(--text-muted)");
 
     const nodeExit = node.exit().transition()
         .duration(750)
         .attr("transform", d => `translate(${source.y},${source.x})`)
         .remove();
 
-    nodeExit.select('circle')
-        .attr('r', 1e-6);
+    nodeExit.select('circle').attr('r', 1e-6);
+    nodeExit.select('text').style("fill-opacity", 1e-6);
 
-    nodeExit.select('text')
-        .style("fill-opacity", 1e-6);
-
-    // ****************** links section ***************************
+    // --- Links ---
     const link = g.selectAll('path.link')
         .data(links, d => d.target.id);
 
@@ -184,7 +182,26 @@ function update(source) {
     linkUpdate.transition()
         .duration(750)
         .attr('d', d => diagonal(d.source, d.target))
-        .style("stroke", d => d.target.data.Profit < 0 ? "rgba(239, 68, 68, 0.2)" : "var(--link-color)");
+        .attr("class", d => {
+            if (selectedNode) {
+                let curr = selectedNode;
+                while (curr) {
+                    if (curr === d.target) return "link active-path";
+                    curr = curr.parent;
+                }
+            }
+            return "link";
+        })
+        .style("stroke", d => {
+            if (selectedNode) {
+                let curr = selectedNode;
+                while (curr) {
+                    if (curr === d.target) return "#fff";
+                    curr = curr.parent;
+                }
+            }
+            return d.target.data.Profit < 0 ? "rgba(239, 68, 68, 0.2)" : "var(--link-color)";
+        });
 
     const linkExit = link.exit().transition()
         .duration(750)
@@ -200,7 +217,6 @@ function update(source) {
     });
 }
 
-// C. Supplementary UI: Update KPI Panel
 function updateKPI(d) {
     const data = d.data;
     const sales = data.Sales || 0;
@@ -214,7 +230,6 @@ function updateKPI(d) {
         else leafCount++;
     }
     
-    // Count leaves only if it's not a leaf itself
     if (d.children || d._children) {
         countLeaves(d);
     } else {
@@ -235,9 +250,8 @@ function updateKPI(d) {
     document.getElementById('kpi-orders').innerText = leafCount.toLocaleString();
 }
 
-// Toggle children on click
 function click(event, d) {
-    // Update KPI panel
+    selectedNode = d;
     updateKPI(d);
     
     if (d.children) {
@@ -250,7 +264,6 @@ function click(event, d) {
     update(d);
 }
 
-// Diagonal generator for horizontal tree
 function diagonal(s, d) {
     return `M ${s.y} ${s.x}
             C ${(s.y + d.y) / 2} ${s.x},
@@ -288,26 +301,35 @@ function showTooltip(event, d) {
         .style("left", (event.pageX + 15) + "px")
         .style("top", (event.pageY - 20) + "px");
 
-    // Add a hover effect on the radius dynamically
     const currentR = parseFloat(d3.select(event.currentTarget).select("circle").attr("r"));
     d3.select(event.currentTarget).select("circle").attr("r", currentR + 3);
 }
 
 function hideTooltip(event, d) {
     d3.select("#tooltip").style("display", "none");
-    // Restore the radius dynamically based on sales
     const baseR = Math.max(4, radiusScale(d.data.Sales || 0));
     d3.select(event.currentTarget).select("circle").attr("r", baseR);
 }
 
 function resetZoom() {
+    selectedNode = null;
+
+    root.descendants().forEach(d => {
+        if (d._children) {
+            d.children = d._children;
+        }
+    });
+    applyInitialCollapse(root);
+
+    update(root);
+    updateKPI(root);
+
     svg.transition().duration(750).call(
         zoom.transform,
         d3.zoomIdentity.translate(width / 4, height / 2).scale(0.8)
     );
 }
 
-// Handle resize
 window.addEventListener('resize', () => {
     const vizArea = document.getElementById('viz-area');
     width = vizArea.clientWidth;
