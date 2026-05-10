@@ -17,6 +17,8 @@
             --node-branch: #6366f1;
             --node-leaf: #10b981;
             --link-color: #334155;
+            --danger: #ef4444;
+            --success: #10b981;
         }
 
         body,
@@ -65,14 +67,53 @@
             color: var(--text-muted);
         }
 
+        .main-content {
+            display: flex;
+            flex-grow: 1;
+            overflow: hidden;
+        }
+
         #viz-area {
             flex-grow: 1;
+            width: 75%;
             position: relative;
             cursor: grab;
         }
 
         #viz-area:active {
             cursor: grabbing;
+        }
+        
+        #kpi-panel {
+            width: 25%;
+            background: var(--card-bg);
+            border-left: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            overflow-y: auto;
+        }
+
+        .kpi-card {
+            background: rgba(15, 23, 42, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            padding: 1.25rem;
+            border-radius: 0.75rem;
+        }
+
+        .kpi-label {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.5rem;
+        }
+
+        .kpi-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--text-main);
         }
 
         .controls {
@@ -170,8 +211,8 @@
         }
 
         .node:hover circle {
-            r: 6px;
             stroke: #fff;
+            stroke-width: 2px;
         }
 
         .link {
@@ -203,7 +244,35 @@
             </div>
         </header>
 
-        <div id="viz-area"></div>
+        <div class="main-content">
+            <div id="viz-area"></div>
+            
+            <div id="kpi-panel">
+                <h2 id="kpi-title" style="margin-top:0; border-bottom:1px solid #334155; padding-bottom:1rem; font-size: 1.25rem;">Superstore Analytics</h2>
+                
+                <div class="kpi-card">
+                    <div class="kpi-label">Total Sales</div>
+                    <div class="kpi-value" id="kpi-sales">$0.00</div>
+                </div>
+                
+                <div class="kpi-card">
+                    <div class="kpi-label">Total Profit</div>
+                    <div class="kpi-value" id="kpi-profit">$0.00</div>
+                </div>
+                
+                <div class="kpi-card">
+                    <div class="kpi-label">Profit Margin</div>
+                    <div class="kpi-value" id="kpi-margin">0.00%</div>
+                </div>
+                
+                <div class="kpi-card">
+                    <div class="kpi-label">Total Leaf Nodes</div>
+                    <div class="kpi-value" id="kpi-orders" style="color:var(--accent);">0</div>
+                </div>
+                
+                <p style="font-size:0.75rem; color:var(--text-muted); margin-top: auto;">* Click any node in the graph to update these metrics.</p>
+            </div>
+        </div>
     </div>
 
     <div class="loading-overlay" id="loader">

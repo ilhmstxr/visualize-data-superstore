@@ -1,14 +1,23 @@
 let svg, g, zoom, root, treeLayout;
 let i = 0;
-const width = window.innerWidth;
-const height = window.innerHeight - 80;
+let width, height;
 const margin = { top: 20, right: 120, bottom: 20, left: 120 };
+
+// Scales for Semantic Visual Encoding
+// Radius mapped to Sales (domain: 0 to ~2.5M, range: 4px to 25px)
+const radiusScale = d3.scaleSqrt().domain([0, 2500000]).range([4, 25]);
 
 async function init() {
     try {
         // Fetch the JSON data
         const response = await fetch('hierarchy.json');
         const data = await response.json();
+
+        // Calculate dimensions based on the 75% width container
+        width = document.getElementById('viz-area').clientWidth;
+        height = document.getElementById('viz-area').clientHeight;
+        
+        if (height === 0) height = window.innerHeight - 80;
 
         render(data);
 
@@ -55,24 +64,31 @@ function render(data) {
         .attr("transform", `translate(${margin.left},${margin.top})`);
 
     // Use fixed node size for a consistent vertical layout
-    treeLayout = d3.tree().nodeSize([30, 250]);
+    treeLayout = d3.tree().nodeSize([40, 250]); // slightly larger spacing for bigger nodes
 
     root = d3.hierarchy(data);
     root.x0 = height / 2;
     root.y0 = 0;
 
-    // Initialize all nodes and collapse them to prevent lag
+    // Initialize all nodes
     root.descendants().forEach((d) => {
         d.id = ++i;
         d._children = d.children;
     });
 
-    // Collapse all nodes past the first level initially
+    // B. Collapsible Nodes: Show until Category Level (Depth 3)
+    // Level 0: Root
+    // Level 1: Year
+    // Level 2: Quarter
+    // Level 3: Category
     function collapse(d) {
         if (d.children) {
             d._children = d.children;
             d._children.forEach(collapse);
-            d.children = null;
+            // Collapse if depth is 3 (Category) or deeper
+            if (d.depth >= 3) {
+                d.children = null;
+            }
         }
     }
 
@@ -81,6 +97,9 @@ function render(data) {
     }
 
     update(root);
+    
+    // Initialize KPI panel with Root data
+    updateKPI(root);
 
     // Set initial zoom centered
     svg.call(zoom.transform, d3.zoomIdentity.translate(width / 4, height / 2).scale(0.8));
@@ -105,15 +124,16 @@ function update(source) {
         .on("mouseover", showTooltip)
         .on("mouseout", hideTooltip);
 
+    // A. Semantic Visual Encoding: Size by Sales, Color by Profit
     nodeEnter.append('circle')
         .attr('class', 'node')
         .attr('r', 1e-6)
-        .style("fill", d => d._children ? "var(--node-branch)" : "var(--node-leaf)")
-        .style("filter", "drop-shadow(0 0 2px rgba(99, 102, 241, 0.5))");
+        .style("fill", d => d.data.Profit < 0 ? "var(--danger)" : "var(--success)")
+        .style("filter", "drop-shadow(0 0 2px rgba(0, 0, 0, 0.3))");
 
     nodeEnter.append('text')
         .attr("dy", ".35em")
-        .attr("x", d => d.children || d._children ? -13 : 13)
+        .attr("x", d => d.children || d._children ? - (radiusScale(d.data.Sales || 0) + 5) : (radiusScale(d.data.Sales || 0) + 5))
         .attr("text-anchor", d => d.children || d._children ? "end" : "start")
         .style("fill", "var(--text-muted)")
         .style("font-size", "11px")
@@ -126,12 +146,15 @@ function update(source) {
         .duration(750)
         .attr("transform", d => `translate(${d.y},${d.x})`);
 
+    // Update radius and color
     nodeUpdate.select('circle.node')
-        .attr('r', d => d.children || d._children ? 5 : 3)
-        .style("fill", d => d._children ? "var(--node-branch)" : "var(--node-leaf)")
+        .attr('r', d => Math.max(4, radiusScale(d.data.Sales || 0)))
+        .style("fill", d => d.data.Profit < 0 ? "var(--danger)" : "var(--success)")
+        .style("opacity", d => d._children && !d.children ? 0.7 : 1) // slightly dim collapsed nodes
         .attr('cursor', 'pointer');
 
     nodeUpdate.select('text')
+        .attr("x", d => d.children || d._children ? - (Math.max(4, radiusScale(d.data.Sales || 0)) + 6) : (Math.max(4, radiusScale(d.data.Sales || 0)) + 6))
         .style("fill-opacity", 1);
 
     const nodeExit = node.exit().transition()
@@ -160,7 +183,8 @@ function update(source) {
 
     linkUpdate.transition()
         .duration(750)
-        .attr('d', d => diagonal(d.source, d.target));
+        .attr('d', d => diagonal(d.source, d.target))
+        .style("stroke", d => d.target.data.Profit < 0 ? "rgba(239, 68, 68, 0.2)" : "var(--link-color)");
 
     const linkExit = link.exit().transition()
         .duration(750)
@@ -176,8 +200,46 @@ function update(source) {
     });
 }
 
+// C. Supplementary UI: Update KPI Panel
+function updateKPI(d) {
+    const data = d.data;
+    const sales = data.Sales || 0;
+    const profit = data.Profit || 0;
+    const margin = sales === 0 ? 0 : ((profit / sales) * 100);
+    
+    let leafCount = 0;
+    function countLeaves(node) {
+        if (node.children) node.children.forEach(countLeaves);
+        else if (node._children) node._children.forEach(countLeaves);
+        else leafCount++;
+    }
+    
+    // Count leaves only if it's not a leaf itself
+    if (d.children || d._children) {
+        countLeaves(d);
+    } else {
+        leafCount = 1;
+    }
+
+    document.getElementById('kpi-title').innerText = data.name;
+    document.getElementById('kpi-sales').innerText = `$${sales.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+    
+    const profitEl = document.getElementById('kpi-profit');
+    profitEl.innerText = `$${profit.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+    profitEl.style.color = profit < 0 ? 'var(--danger)' : 'var(--success)';
+    
+    const marginEl = document.getElementById('kpi-margin');
+    marginEl.innerText = `${margin.toFixed(2)}%`;
+    marginEl.style.color = margin < 0 ? 'var(--danger)' : 'var(--success)';
+    
+    document.getElementById('kpi-orders').innerText = leafCount.toLocaleString();
+}
+
 // Toggle children on click
 function click(event, d) {
+    // Update KPI panel
+    updateKPI(d);
+    
     if (d.children) {
         d._children = d.children;
         d.children = null;
@@ -226,12 +288,16 @@ function showTooltip(event, d) {
         .style("left", (event.pageX + 15) + "px")
         .style("top", (event.pageY - 20) + "px");
 
-    d3.select(event.currentTarget).select("circle").attr("r", 8);
+    // Add a hover effect on the radius dynamically
+    const currentR = parseFloat(d3.select(event.currentTarget).select("circle").attr("r"));
+    d3.select(event.currentTarget).select("circle").attr("r", currentR + 3);
 }
 
 function hideTooltip(event, d) {
     d3.select("#tooltip").style("display", "none");
-    d3.select(event.currentTarget).select("circle").attr("r", d.children || d._children ? 5 : 3);
+    // Restore the radius dynamically based on sales
+    const baseR = Math.max(4, radiusScale(d.data.Sales || 0));
+    d3.select(event.currentTarget).select("circle").attr("r", baseR);
 }
 
 function resetZoom() {
@@ -243,11 +309,12 @@ function resetZoom() {
 
 // Handle resize
 window.addEventListener('resize', () => {
-    const newWidth = window.innerWidth;
-    const newHeight = window.innerHeight - 80;
+    const vizArea = document.getElementById('viz-area');
+    width = vizArea.clientWidth;
+    height = vizArea.clientHeight;
     d3.select("svg")
-        .attr("width", newWidth)
-        .attr("height", newHeight);
+        .attr("width", width)
+        .attr("height", height);
 });
 
 init();
